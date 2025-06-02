@@ -13,7 +13,7 @@ app.use(bodyParser.urlencoded({ extended: false }));
 // Serve files for download
 app.use('/files', express.static(path.join(__dirname, 'files')));
 
-const OPENAI_API_KEY = 'sk-...'; // Replace with your actual key
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // Ensure the files directory exists
 fs.ensureDirSync(path.join(__dirname, 'files'));
