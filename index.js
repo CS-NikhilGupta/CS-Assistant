@@ -14,7 +14,7 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use('/files', express.static(path.join(__dirname, 'files')));
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const BASE_URL = process.env.BASE_URL || 'https://yourdomain.onrender.com'; // fallback
+const BASE_URL = process.env.BASE_URL || 'https://yourdomain.onrender.com';
 fs.ensureDirSync(path.join(__dirname, 'files'));
 
 const bannedPatterns = [
@@ -53,27 +53,31 @@ app.post('/webhook', async (req, res) => {
   const from = req.body.From;
   const message = req.body.Body?.trim();
 
-  console.log(`Message from ${from}: ${message}`);
+  console.log(`📩 Message from ${from}: ${message}`);
 
   // 🚫 Abuse Filter
   if (bannedPatterns.some(pattern => pattern.test(message))) {
     await logAbuse(from, message);
+    const abuseReply = "⚠️ This bot only supports Company Secretary-related questions. Please keep the conversation professional.";
+    console.log("🚫 Abuse blocked:", message);
     res.set('Content-Type', 'text/xml');
-    res.send(`<Response><Message>This bot is for educational & professional CS support only. Please avoid inappropriate content.</Message></Response>`);
+    res.send(`<Response><Message>${abuseReply}</Message></Response>`);
     return;
   }
 
-  // 🔁 Handle "continue"
+  // 🔁 "Continue" handler
   if (message.toLowerCase() === 'continue') {
     const nextChunk = await getNextChunk(from);
+    const safeReply = nextChunk || "No more content to show.";
+    console.log("🔄 Sending continuation chunk");
     res.set('Content-Type', 'text/xml');
-    res.send(`<Response><Message>${nextChunk || 'No more content to show.'}</Message></Response>`);
+    res.send(`<Response><Message>${safeReply}</Message></Response>`);
     return;
   }
 
-  // 📝 Draft Generator
+  // 📄 Draft generator
   if (message.toLowerCase().startsWith('draft')) {
-    let reply = "Sorry, I couldn't generate the draft.";
+    let reply = "Sorry, I couldn't generate the draft document.";
     try {
       const response = await axios.post(
         'https://api.openai.com/v1/chat/completions',
@@ -92,7 +96,6 @@ app.post('/webhook', async (req, res) => {
       );
 
       console.log("✅ GPT draft response received");
-      console.log(response.data);
 
       const draftText = response.data.choices[0].message.content.trim();
       const doc = new Document({
@@ -127,17 +130,20 @@ app.post('/webhook', async (req, res) => {
       await fs.writeFile(filePath, buffer);
 
       const downloadUrl = `${BASE_URL}/files/${fileName}`;
-      reply = `✅ Draft generated. Download your document here:\n${downloadUrl}`;
+      reply = `✅ Draft ready:\n${downloadUrl}`;
     } catch (err) {
-      console.error("Draft error:", err.response?.data || err.message);
+      console.error("❌ Draft generation error:", err.response?.data || err.message);
     }
+
+    reply = reply || "✅ Draft created, but unable to send download link.";
+    console.log("🟢 Final WhatsApp reply:", reply);
 
     res.set('Content-Type', 'text/xml');
     res.send(`<Response><Message>${reply}</Message></Response>`);
     return;
   }
 
-  // 🤖 GPT Q&A
+  // 💬 Normal CS explanation
   try {
     const response = await axios.post(
       'https://api.openai.com/v1/chat/completions',
@@ -167,9 +173,9 @@ app.post('/webhook', async (req, res) => {
       res.send(`<Response><Message>${gptReply}</Message></Response>`);
     }
   } catch (err) {
-    console.error("GPT Error:", err.response?.data || err.message);
+    console.error("❌ GPT Error:", err.response?.data || err.message);
     res.set('Content-Type', 'text/xml');
-    res.send(`<Response><Message>Sorry, an error occurred while processing your request.</Message></Response>`);
+    res.send(`<Response><Message>Sorry, something went wrong while answering your query.</Message></Response>`);
   }
 });
 
