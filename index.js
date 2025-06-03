@@ -1,4 +1,4 @@
-// FINAL PATCHED index.js with XML escape
+// FINAL STABLE index.js with safeReply wrapper, fallback logging, XML escaping, and GPT output control
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
@@ -23,6 +23,19 @@ function escapeXml(unsafe) {
     .replace(/>/g, "&gt;")
     .replace(/\"/g, "&quot;")
     .replace(/\'/g, "&apos;");
+}
+
+function safeReply(res, message) {
+  try {
+    const safe = escapeXml(message || "Sorry, something went wrong.");
+    console.log("🟢 Sending WhatsApp reply:", safe);
+    res.set('Content-Type', 'text/xml');
+    res.send(`<Response><Message>${safe}</Message></Response>`);
+  } catch (error) {
+    console.error("❌ Error in safeReply:", error);
+    res.set('Content-Type', 'text/xml');
+    res.send(`<Response><Message>Unexpected error while sending reply.</Message></Response>`);
+  }
 }
 
 const bannedPatterns = [
@@ -71,18 +84,14 @@ app.post('/webhook', async (req, res) => {
     await logAbuse(from, message);
     const abuseReply = "⚠️ This bot only supports Company Secretary-related questions. Please keep the conversation professional.";
     console.log("🚫 Abuse blocked:", message);
-    res.set('Content-Type', 'text/xml');
-    res.send(`<Response><Message>${escapeXml(abuseReply)}</Message></Response>`);
-    return;
+    return safeReply(res, abuseReply);
   }
 
   if (message.toLowerCase() === 'continue') {
     const nextChunk = await getNextChunk(from);
-    const safeReply = nextChunk || "No more content to show.";
+    const safeReplyText = nextChunk || "No more content to show.";
     console.log("🔄 Sending continuation chunk");
-    res.set('Content-Type', 'text/xml');
-    res.send(`<Response><Message>${escapeXml(safeReply)}</Message></Response>`);
-    return;
+    return safeReply(res, safeReplyText);
   }
 
   if (message.toLowerCase().startsWith('draft')) {
@@ -93,7 +102,7 @@ app.post('/webhook', async (req, res) => {
         {
           model: 'gpt-3.5-turbo',
           messages: getPrompt(message),
-          max_tokens: 1200,
+          max_tokens: 900,
           temperature: 0.7,
         },
         {
@@ -117,10 +126,7 @@ app.post('/webhook', async (req, res) => {
             new Paragraph({ text: "\n" }),
             new Paragraph({
               alignment: AlignmentType.LEFT,
-              children: [new TextRun({
-                text: `RESOLVED THAT ${draftText}`,
-                size: 24
-              })],
+              children: [new TextRun({ text: `RESOLVED THAT ${draftText}`, size: 24 })],
             }),
             new Paragraph({ text: "\n\n" }),
             new Paragraph({ text: "Place: ____________", alignment: AlignmentType.LEFT }),
@@ -144,9 +150,7 @@ app.post('/webhook', async (req, res) => {
       console.error("❌ Draft generation error:", err.response?.data || err.message);
     }
 
-    res.set('Content-Type', 'text/xml');
-    res.send(`<Response><Message>${escapeXml(reply)}</Message></Response>`);
-    return;
+    return safeReply(res, reply);
   }
 
   try {
@@ -155,7 +159,7 @@ app.post('/webhook', async (req, res) => {
       {
         model: 'gpt-3.5-turbo',
         messages: getPrompt(message),
-        max_tokens: 1200,
+        max_tokens: 900,
         temperature: 0.7,
       },
       {
@@ -168,25 +172,25 @@ app.post('/webhook', async (req, res) => {
 
     let gptReply = response.data.choices[0]?.message?.content?.trim();
     console.log("🧠 GPT Reply:", gptReply);
+    console.log("📏 gptReply.length:", gptReply?.length);
+    console.log("📦 gptReply typeof:", typeof gptReply);
+
     if (!gptReply || gptReply.length < 2) {
       gptReply = "Sorry, I couldn’t understand that. Please try rephrasing.";
     }
 
     const chunks = splitIntoChunks(gptReply);
-    console.log("📦 Chunks:", chunks.length);
+    console.log("📦 Chunks count:", chunks.length);
 
     if (chunks.length > 1) {
       await storeChunks(from, chunks.slice(1));
-      res.set('Content-Type', 'text/xml');
-      res.send(`<Response><Message>${escapeXml(chunks[0])}\n\n...(message truncated)\nReply 'continue' to read more.</Message></Response>`);
+      return safeReply(res, chunks[0] + "\n\n...(message truncated)\nReply 'continue' to read more.");
     } else {
-      res.set('Content-Type', 'text/xml');
-      res.send(`<Response><Message>${escapeXml(gptReply)}</Message></Response>`);
+      return safeReply(res, gptReply);
     }
   } catch (err) {
     console.error("❌ GPT Error:", err.response?.data || err.message);
-    res.set('Content-Type', 'text/xml');
-    res.send(`<Response><Message>Sorry, something went wrong while answering your query.</Message></Response>`);
+    return safeReply(res, "Sorry, something went wrong while answering your query.");
   }
 });
 
