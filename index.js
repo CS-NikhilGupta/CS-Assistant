@@ -11,7 +11,15 @@ const { logAbuse, storeChunks, getNextChunk } = require('./googleSheet');
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
-app.use('/files', express.static(path.join(__dirname, 'files')));
+app.get('/files/:filename', async (req, res) => {
+  const filePath = path.join(__dirname, 'files', req.params.filename);
+  if (await fs.pathExists(filePath)) {
+    res.download(filePath);
+  } else {
+    res.status(404).send('❌ File not found.');
+  }
+});
+
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const BASE_URL = process.env.BASE_URL || 'https://yourdomain.onrender.com';
