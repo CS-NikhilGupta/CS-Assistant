@@ -14,18 +14,21 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use('/files', express.static(path.join(__dirname, 'files')));
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const BASE_URL = process.env.BASE_URL || 'https://yourdomain.onrender.com'; // fallback
 fs.ensureDirSync(path.join(__dirname, 'files'));
 
-// 🚫 Offensive words list (basic starter)
-const bannedWords = ['sex', 'kill', 'rape', 'f***', 'suicide'];
+const bannedPatterns = [
+  /\bfuck\b/i, /\bshit\b/i, /\basshole\b/i, /\bbastard\b/i,
+  /\bsuck\b/i, /\bkill\b/i, /\bsuicide\b/i, /\brape\b/i,
+];
 
 const getPrompt = (message) => [
   {
     role: 'system',
     content: `
-You are a digital paralegal assistant for Company Secretaries in India. You explain CS laws, sections, and procedures using professional tone with headings, bullet points, short paragraphs. Always return relevant legal links where possible (MCA or IndiaCode).
+You are a digital paralegal assistant for Company Secretaries in India. You explain CS laws, sections, and procedures using a professional tone with headings, bullet points, and legal links.
 
-For document requests starting with "draft", provide formal Indian legal formatting for Board Resolutions or Notices in a way that can be inserted into a .docx template.
+When a message starts with "draft", respond with a formal Board Resolution or Notice formatted for Indian CS compliance in .docx format.
 `.trim(),
   },
   {
@@ -53,14 +56,14 @@ app.post('/webhook', async (req, res) => {
   console.log(`Message from ${from}: ${message}`);
 
   // 🚫 Abuse Filter
-  if (bannedWords.some(word => message.toLowerCase().includes(word))) {
+  if (bannedPatterns.some(pattern => pattern.test(message))) {
     await logAbuse(from, message);
     res.set('Content-Type', 'text/xml');
     res.send(`<Response><Message>This bot is for educational & professional CS support only. Please avoid inappropriate content.</Message></Response>`);
     return;
   }
 
-  // 🔁 Handle "continue" for long replies
+  // 🔁 Handle "continue"
   if (message.toLowerCase() === 'continue') {
     const nextChunk = await getNextChunk(from);
     res.set('Content-Type', 'text/xml');
@@ -68,7 +71,7 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // 📝 Handle draft generation
+  // 📝 Draft Generator
   if (message.toLowerCase().startsWith('draft')) {
     let reply = "Sorry, I couldn't generate the draft.";
     try {
@@ -88,8 +91,10 @@ app.post('/webhook', async (req, res) => {
         }
       );
 
-      const draftText = response.data.choices[0].message.content.trim();
+      console.log("✅ GPT draft response received");
+      console.log(response.data);
 
+      const draftText = response.data.choices[0].message.content.trim();
       const doc = new Document({
         sections: [{
           children: [
@@ -121,7 +126,7 @@ app.post('/webhook', async (req, res) => {
       const buffer = await Packer.toBuffer(doc);
       await fs.writeFile(filePath, buffer);
 
-      const downloadUrl = `https://${req.headers.host}/files/${fileName}`;
+      const downloadUrl = `${BASE_URL}/files/${fileName}`;
       reply = `✅ Draft generated. Download your document here:\n${downloadUrl}`;
     } catch (err) {
       console.error("Draft error:", err.response?.data || err.message);
@@ -132,7 +137,7 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // 🤖 Regular GPT Question
+  // 🤖 GPT Q&A
   try {
     const response = await axios.post(
       'https://api.openai.com/v1/chat/completions',
@@ -154,7 +159,7 @@ app.post('/webhook', async (req, res) => {
     const chunks = splitIntoChunks(gptReply);
 
     if (chunks.length > 1) {
-      await storeChunks(from, chunks.slice(1)); // store remaining
+      await storeChunks(from, chunks.slice(1));
       res.set('Content-Type', 'text/xml');
       res.send(`<Response><Message>${chunks[0]}\n\n...(message truncated)\nReply 'continue' to read more.</Message></Response>`);
     } else {
