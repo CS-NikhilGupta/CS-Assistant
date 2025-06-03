@@ -1,4 +1,4 @@
-// PATCHED index.js
+// FINAL PATCHED index.js with XML escape
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
@@ -15,6 +15,15 @@ app.use(bodyParser.urlencoded({ extended: false }));
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const BASE_URL = process.env.BASE_URL || 'https://yourdomain.onrender.com';
 fs.ensureDirSync(path.join(__dirname, 'files'));
+
+function escapeXml(unsafe) {
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/\'/g, "&apos;");
+}
 
 const bannedPatterns = [
   /\bfuck\b/i, /\bshit\b/i, /\basshole\b/i, /\bbastard\b/i,
@@ -63,7 +72,7 @@ app.post('/webhook', async (req, res) => {
     const abuseReply = "⚠️ This bot only supports Company Secretary-related questions. Please keep the conversation professional.";
     console.log("🚫 Abuse blocked:", message);
     res.set('Content-Type', 'text/xml');
-    res.send(`<Response><Message>${abuseReply}</Message></Response>`);
+    res.send(`<Response><Message>${escapeXml(abuseReply)}</Message></Response>`);
     return;
   }
 
@@ -72,7 +81,7 @@ app.post('/webhook', async (req, res) => {
     const safeReply = nextChunk || "No more content to show.";
     console.log("🔄 Sending continuation chunk");
     res.set('Content-Type', 'text/xml');
-    res.send(`<Response><Message>${safeReply}</Message></Response>`);
+    res.send(`<Response><Message>${escapeXml(safeReply)}</Message></Response>`);
     return;
   }
 
@@ -136,7 +145,7 @@ app.post('/webhook', async (req, res) => {
     }
 
     res.set('Content-Type', 'text/xml');
-    res.send(`<Response><Message>${reply}</Message></Response>`);
+    res.send(`<Response><Message>${escapeXml(reply)}</Message></Response>`);
     return;
   }
 
@@ -169,10 +178,10 @@ app.post('/webhook', async (req, res) => {
     if (chunks.length > 1) {
       await storeChunks(from, chunks.slice(1));
       res.set('Content-Type', 'text/xml');
-      res.send(`<Response><Message>${chunks[0]}\n\n...(message truncated)\nReply 'continue' to read more.</Message></Response>`);
+      res.send(`<Response><Message>${escapeXml(chunks[0])}\n\n...(message truncated)\nReply 'continue' to read more.</Message></Response>`);
     } else {
       res.set('Content-Type', 'text/xml');
-      res.send(`<Response><Message>${gptReply}</Message></Response>`);
+      res.send(`<Response><Message>${escapeXml(gptReply)}</Message></Response>`);
     }
   } catch (err) {
     console.error("❌ GPT Error:", err.response?.data || err.message);
