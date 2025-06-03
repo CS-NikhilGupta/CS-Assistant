@@ -1,3 +1,4 @@
+// PATCHED index.js
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
@@ -8,18 +9,8 @@ const {
 } = require('docx');
 
 const { logAbuse, storeChunks, getNextChunk } = require('./googleSheet');
-
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
-app.get('/files/:filename', async (req, res) => {
-  const filePath = path.join(__dirname, 'files', req.params.filename);
-  if (await fs.pathExists(filePath)) {
-    res.download(filePath);
-  } else {
-    res.status(404).send('❌ File not found.');
-  }
-});
-
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const BASE_URL = process.env.BASE_URL || 'https://yourdomain.onrender.com';
@@ -33,11 +24,7 @@ const bannedPatterns = [
 const getPrompt = (message) => [
   {
     role: 'system',
-    content: `
-You are a digital paralegal assistant for Company Secretaries in India. You explain CS laws, sections, and procedures using a professional tone with headings, bullet points, and legal links.
-
-When a message starts with "draft", respond with a formal Board Resolution or Notice formatted for Indian CS compliance in .docx format.
-`.trim(),
+    content: `You are a digital paralegal assistant for Company Secretaries in India. Explain CS laws, sections, and procedures with bullet points and legal accuracy. When prompted with 'draft', provide only the resolution body.`
   },
   {
     role: 'user',
@@ -57,13 +44,20 @@ function splitIntoChunks(text, maxLength = 1200) {
   return chunks;
 }
 
+app.get('/files/:filename', async (req, res) => {
+  const filePath = path.join(__dirname, 'files', req.params.filename);
+  if (await fs.pathExists(filePath)) {
+    res.download(filePath);
+  } else {
+    res.status(404).send('❌ File not found.');
+  }
+});
+
 app.post('/webhook', async (req, res) => {
   const from = req.body.From;
   const message = req.body.Body?.trim();
-
   console.log(`📩 Message from ${from}: ${message}`);
 
-  // 🚫 Abuse Filter
   if (bannedPatterns.some(pattern => pattern.test(message))) {
     await logAbuse(from, message);
     const abuseReply = "⚠️ This bot only supports Company Secretary-related questions. Please keep the conversation professional.";
@@ -73,7 +67,6 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // 🔁 "Continue" handler
   if (message.toLowerCase() === 'continue') {
     const nextChunk = await getNextChunk(from);
     const safeReply = nextChunk || "No more content to show.";
@@ -83,7 +76,6 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // 📄 Draft generator
   if (message.toLowerCase().startsWith('draft')) {
     let reply = "Sorry, I couldn't generate the draft document.";
     try {
@@ -103,24 +95,24 @@ app.post('/webhook', async (req, res) => {
         }
       );
 
-      console.log("✅ GPT draft response received");
+      let draftText = response.data.choices[0]?.message?.content?.trim() || "";
+      draftText = draftText.replace(/BOARD RESOLUTION.*/i, '').replace(/Click here.*/gi, '').trim();
 
-      const draftText = response.data.choices[0].message.content.trim();
       const doc = new Document({
         sections: [{
           children: [
             new Paragraph({
-              text: "BOARD RESOLUTION",
               alignment: AlignmentType.CENTER,
-              children: [new TextRun({ text: "BOARD RESOLUTION", bold: true, size: 28 })],
+              children: [new TextRun({ text: "BOARD RESOLUTION", bold: true, size: 32 })],
             }),
             new Paragraph({ text: "\n" }),
-            ...draftText.split('\n').map(line =>
-              new Paragraph({
-                alignment: AlignmentType.JUSTIFIED,
-                children: [new TextRun({ text: line.trim(), size: 24 })],
-              })
-            ),
+            new Paragraph({
+              alignment: AlignmentType.LEFT,
+              children: [new TextRun({
+                text: `RESOLVED THAT ${draftText}`,
+                size: 24
+              })],
+            }),
             new Paragraph({ text: "\n\n" }),
             new Paragraph({ text: "Place: ____________", alignment: AlignmentType.LEFT }),
             new Paragraph({ text: "Date: ____________", alignment: AlignmentType.LEFT }),
@@ -143,15 +135,11 @@ app.post('/webhook', async (req, res) => {
       console.error("❌ Draft generation error:", err.response?.data || err.message);
     }
 
-    reply = reply || "✅ Draft created, but unable to send download link.";
-    console.log("🟢 Final WhatsApp reply:", reply);
-
     res.set('Content-Type', 'text/xml');
     res.send(`<Response><Message>${reply}</Message></Response>`);
     return;
   }
 
-  // 💬 Normal CS explanation
   try {
     const response = await axios.post(
       'https://api.openai.com/v1/chat/completions',
@@ -169,8 +157,14 @@ app.post('/webhook', async (req, res) => {
       }
     );
 
-    const gptReply = response.data.choices[0].message.content.trim();
+    let gptReply = response.data.choices[0]?.message?.content?.trim();
+    console.log("🧠 GPT Reply:", gptReply);
+    if (!gptReply || gptReply.length < 2) {
+      gptReply = "Sorry, I couldn’t understand that. Please try rephrasing.";
+    }
+
     const chunks = splitIntoChunks(gptReply);
+    console.log("📦 Chunks:", chunks.length);
 
     if (chunks.length > 1) {
       await storeChunks(from, chunks.slice(1));
