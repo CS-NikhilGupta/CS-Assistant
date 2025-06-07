@@ -9,10 +9,6 @@ const FormData = require('form-data');
 const {
   Document, Packer, Paragraph, TextRun, AlignmentType,
 } = require('docx');
-"dependencies": {
-  ...
-  "multer": "^1.4.5"
-}
 
 const { logAbuse, storeChunks, getNextChunk } = require('./googleSheet');
 const app = express();
