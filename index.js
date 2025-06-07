@@ -132,3 +132,7 @@ app.post('/transcribe-audio', upload.single('audio'), async (req, res) => {
     fs.unlink(filePath); // cleanup
   }
 });
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
+});
